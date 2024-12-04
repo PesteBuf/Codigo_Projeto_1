@@ -1,0 +1,35 @@
+#include <SharpIR.h>
+
+#define ir A0
+#define model 1080
+
+int pin = A0;
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(pin, INPUT);
+}
+
+void loop() {
+  float media_add = 0.0;
+  float media_total = 0.0;
+
+  for (int contagem = 0; contagem < 60; contagem++) {
+    int I = analogRead(pin);
+
+    // Evitar divisões inválidas
+    if (I <= 9) {
+      Serial.println("Leitura inválida do sensor");
+      return;
+    }
+
+    float value = (6762.0 / (I - 9)) - 4.0;
+    media_add += value;
+  }
+
+
+  media_total = media_add / 60.0;
+
+  Serial.println(media_total, 2);
+  delay(500);
+}
