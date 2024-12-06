@@ -1,0 +1,222 @@
+#include <SPI.h>
+#include <SD.h>
+#include <LiquidCrystal_I2C.h>
+
+// Variáveis LCD
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// Frases para exibição no LCD
+String frases[] = {
+  "Testemunhem o Scanner 3D!",
+  "Bom Natal e Boas Entradas!",
+  "Professores,o 20 vai vir  ?",
+  "Custou mas estamos aqui !!",
+  "Aguardem, o Scan esta quase..."
+};
+
+const int numeroDeFrases = 5;      // Quantidade de frases
+unsigned long ultimaTroca = 0;     // Momento da última troca de frase
+const int intervaloTroca = 15000;  // Tempo antes de trocar frase (ms)
+const int intervaloScroll = 300;   // Tempo entre scrolls (ms)
+unsigned long ultimoScroll = 0;    // Momento do último scroll
+int scrollPos = 0;                 // Posição atual do scroll
+int indiceAtual = 0;
+
+// Botão de controle
+int buttonPin = 6;
+int buttonState;
+int lastButtonState = LOW;
+unsigned long lastDebounceTime = 0;
+const unsigned long debounceDelay = 50;
+
+// Motores
+const int dirPin_frontal_motor = 4;
+const int stepPin_frontal_motor = 5;
+const int steps_frontal_motor = 200;
+const int dirPin_back_motor = 9;
+const int stepPin_back_motor = 8;
+const int steps_back_motor = 200;
+
+float distance = 0;
+float distance_to_center = 12.5; // Distância do sensor ao centro em cm
+float angle = 0;
+float RADIANS = 0;
+
+float x = 0, y = 0, z = 0;
+int z_altura_max = 10;
+
+File file_values;
+
+long last_millis;
+
+// Estados do scanner
+enum Estados_scanner {
+  ON,
+  OFF
+} estado;
+
+// Função debounce para o botão
+bool buttonPressed() {
+  int reading = digitalRead(buttonPin);
+  bool pressed = false;
+
+  if (reading != lastButtonState) {
+    lastDebounceTime = millis();
+  }
+  if ((millis() - lastDebounceTime) > debounceDelay) {
+    if (reading != buttonState) {
+      buttonState = reading;
+      if (buttonState == HIGH) {
+        pressed = true;
+      }
+    }
+  }
+  lastButtonState = reading;
+  return pressed;
+}
+
+// Calcula a distância usando o sensor
+void distancia() {
+  float media_add = 0.0;
+  for (int contagem = 0; contagem < 60; contagem++) {
+    float I = analogRead(A0);
+    delay(1); // Pequeno atraso
+    if (I <= 9) {
+      Serial.println("Leitura inválida do sensor");
+      return;
+    }
+    float value = (6762.0 / (I - 9)) - 4.0;
+    media_add += value;
+  }
+  float media_total_distancia = media_add / 60.0;
+  distance = distance_to_center - media_total_distancia;
+  y = cos(angle) * distance;
+  x = sin(angle) * distance;
+}
+
+// Função para escrever coordenadas no SD
+void write_to_SD(float SDx, float SDy, float SDz) {
+  file_values = SD.open("mapa.txt", FILE_WRITE);
+  if (file_values) {
+    file_values.print(SDx);
+    file_values.print(",");
+    file_values.print(SDy);
+    file_values.print(",");
+    file_values.println(SDz);
+    file_values.close();
+  }
+}
+
+// Controlo do scanner
+void scanner() {
+  switch (estado) {
+    case OFF:
+      if (buttonPressed()) {
+        estado = ON;
+      }
+      break;
+
+    case ON:
+      // Gira o motor frontal para fazer o scan
+      for (int loop_cont = 0; loop_cont < steps_frontal_motor; loop_cont++) {
+        if (millis() - last_millis > 2) { 
+          last_millis = millis();
+
+          frases_lcd();
+          distancia();
+          digitalWrite(stepPin_frontal_motor, HIGH);
+          delayMicroseconds(1000);
+          digitalWrite(stepPin_frontal_motor, LOW);
+          delayMicroseconds(1000);
+          angle += RADIANS;
+          write_to_SD(x, y, z);
+          if (buttonPressed()) {
+            estado = OFF;
+            return;
+          }
+        }
+      }
+      angle = 0;
+
+      // Eleva o motor traseiro
+      for (int y = 0; y < steps_back_motor; y++) {
+        if (millis() - last_millis > 3) {
+          last_millis = millis();
+          digitalWrite(stepPin_back_motor, HIGH);
+          delayMicroseconds(3000);
+          digitalWrite(stepPin_back_motor, LOW);
+          delayMicroseconds(3000);
+          if (buttonPressed()) {
+            estado = OFF;
+            return;
+          }
+        }
+      }
+      z += 0.1;
+      break;
+  }
+}
+
+// funcao das frases do LCD
+void frases_lcd() {
+  if (millis() - ultimaTroca > intervaloTroca) {
+    indiceAtual = random(0, numeroDeFrases);
+    lcd.clear();
+    lcd.print(frases[indiceAtual]);
+    ultimaTroca = millis();
+    scrollPos = 0;
+  }
+
+  if (millis() - ultimoScroll > intervaloScroll) {
+    lcd.scrollDisplayRight();
+    ultimoScroll = millis();
+    scrollPos++;
+    if (scrollPos > frases[indiceAtual].length() + 16) {
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print(frases[indiceAtual]);
+      scrollPos = 0;
+    }
+  }
+}
+
+// setup -------------------------------
+void setup() {
+  Serial.begin(9600);
+
+  // LCD
+  lcd.init();
+  lcd.clear();
+  lcd.backlight();
+
+  // SD card
+  if (!SD.begin(10)) {
+    Serial.println("SD initialization failed!");
+    return;
+  }
+  file_values = SD.open("mapa.txt", FILE_WRITE);
+  if (file_values) {
+    file_values.close();
+  }
+
+  // Motores
+  pinMode(stepPin_frontal_motor, OUTPUT);
+  pinMode(dirPin_frontal_motor, OUTPUT);
+  pinMode(stepPin_back_motor, OUTPUT);
+  pinMode(dirPin_back_motor, OUTPUT);
+  pinMode(buttonPin, INPUT);
+  pinMode(A0, INPUT);
+
+  digitalWrite(dirPin_frontal_motor, HIGH);
+  digitalWrite(dirPin_back_motor, HIGH);
+
+  estado = OFF;
+  RADIANS = (2 * 3.141592) / steps_frontal_motor;
+
+  lcd.print(frases[indiceAtual]);
+}
+
+// Loop principal
+void loop() {
+  scanner();
+}
